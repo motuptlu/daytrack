@@ -2,12 +2,27 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ConversationSegment, DailySummary } from "./types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Helper to get API Key safely
+const getApiKey = () => {
+  const key = process.env.API_KEY;
+  if (!key) {
+    console.warn("API_KEY is missing. Please set it in Netlify Environment Variables.");
+    return "MISSING_KEY";
+  }
+  return key;
+};
+
+const ai = new GoogleGenAI({ apiKey: getApiKey() });
 
 export const transcribeAudioChunk = async (audioBase64: string, offlineMode: boolean = false): Promise<ConversationSegment[]> => {
+  if (getApiKey() === "MISSING_KEY" && !offlineMode) {
+    console.error("Transcription failed: API Key not configured.");
+    return [];
+  }
+
   if (offlineMode) {
     const now = new Date();
-    const timestamp = now.toLocaleTimeString('en-GB'); // HH:mm:ss
+    const timestamp = now.toLocaleTimeString('en-GB');
     
     return [
       {
@@ -76,6 +91,14 @@ export const transcribeAudioChunk = async (audioBase64: string, offlineMode: boo
 };
 
 export const generateDailySummary = async (transcripts: ConversationSegment[]): Promise<DailySummary> => {
+  if (getApiKey() === "MISSING_KEY") return {
+    overview: "API Key missing. Summary unavailable.",
+    keyEvents: [],
+    actionItems: [],
+    mood: "Unknown",
+    topics: []
+  };
+
   const fullText = transcripts.map(t => `[${t.startTime}] ${t.speaker}: ${t.text}`).join("\n");
   
   try {
