@@ -1,0 +1,7 @@
+{
+  "name": "DayTrack - Your Life Recorder",
+  "description": "A sophisticated life logging application that provides continuous audio recording, real-time AI transcription, smart daily summaries, and a comprehensive activity calendar.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
