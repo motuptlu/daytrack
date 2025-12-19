@@ -22,7 +22,7 @@
             color: #ecfdf5;
             -webkit-tap-highlight-color: transparent;
             min-height: 100vh;
-            overflow-y: scroll; /* Force scroll visibility */
+            overflow-y: auto;
             -webkit-overflow-scrolling: touch;
         }
         .glass-effect {
@@ -31,7 +31,6 @@
             -webkit-backdrop-filter: blur(24px);
             border: 1px solid rgba(16, 185, 129, 0.1);
         }
-        /* Custom scrollbar for better visibility */
         ::-webkit-scrollbar {
             width: 4px;
         }
@@ -41,15 +40,6 @@
         ::-webkit-scrollbar-thumb {
             background: #065f46;
             border-radius: 10px;
-        }
-        /* Animation for current audio segment pulse */
-        @keyframes subtle-glow {
-            0% { border-color: rgba(16, 185, 129, 0.2); }
-            50% { border-color: rgba(16, 185, 129, 0.5); }
-            100% { border-color: rgba(16, 185, 129, 0.2); }
-        }
-        .active-segment-glow {
-            animation: subtle-glow 2s infinite ease-in-out;
         }
     </style>
 <script type="importmap">
@@ -65,5 +55,7 @@
 </head>
 <body>
     <div id="root"></div>
+    <!-- This script tag was missing, which is why the app was not loading -->
+    <script type="module" src="./index.tsx"></script>
 </body>
 </html>
