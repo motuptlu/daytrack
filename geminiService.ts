@@ -2,10 +2,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ConversationSegment, DailySummary } from "./types";
 
-// Enhanced API Key retrieval to be more resilient
 const getApiKey = () => {
   try {
-    // Check multiple possible locations for the key
     const key = (typeof process !== 'undefined' && process.env?.API_KEY) || 
                 (window as any).process?.env?.API_KEY || 
                 (window as any).API_KEY;
@@ -24,7 +22,11 @@ const MOCK_SENTENCES = [
   "Captured a beautiful sunset near the lake today."
 ];
 
-export const transcribeAudioChunk = async (audioBase64: string, offlineMode: boolean = false): Promise<ConversationSegment[]> => {
+export const transcribeAudioChunk = async (
+  audioBase64: string, 
+  offlineMode: boolean = false, 
+  mimeType: string = "audio/webm"
+): Promise<ConversationSegment[]> => {
   const apiKey = getApiKey();
   
   if (!apiKey || offlineMode) {
@@ -48,7 +50,7 @@ export const transcribeAudioChunk = async (audioBase64: string, offlineMode: boo
       model: "gemini-3-flash-preview",
       contents: {
         parts: [
-          { inlineData: { mimeType: "audio/webm", data: audioBase64 } },
+          { inlineData: { mimeType: mimeType, data: audioBase64 } },
           { text: "Transcribe this audio. Identify speakers. Return valid JSON array." }
         ]
       },
@@ -85,7 +87,7 @@ export const generateDailySummary = async (transcripts: ConversationSegment[]): 
   const apiKey = getApiKey();
   if (!apiKey) {
     return { 
-      overview: "Set API_KEY in your hosting provider settings (e.g. Netlify/Vercel) and redeploy.", 
+      overview: "Set API_KEY in your hosting provider settings.", 
       keyEvents: ["Configuration Missing"], 
       actionItems: ["Add API_KEY environment variable"], 
       mood: "Neutral", 

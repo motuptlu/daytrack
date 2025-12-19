@@ -1,7 +1,6 @@
-
 {
   "short_name": "DayTrack",
-  "name": "DayTrack - AI Life Logger",
+  "name": "DayTrack - AI Private Life Logger",
   "icons": [
     {
       "src": "https://cdn-icons-png.flaticon.com/512/3209/3209101.png",
@@ -18,9 +17,18 @@
   ],
   "start_url": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "minimal-ui"],
   "theme_color": "#020d0a",
   "background_color": "#020d0a",
   "orientation": "portrait",
   "scope": "/",
-  "description": "Sophisticated AI-powered life logging and transcription app."
+  "description": "Record your life, transcribe with AI, and keep private memories.",
+  "categories": ["productivity", "lifestyle"],
+  "shortcuts": [
+    {
+      "name": "New Record",
+      "url": "/",
+      "icons": [{ "src": "https://cdn-icons-png.flaticon.com/512/3209/3209101.png", "sizes": "192x192" }]
+    }
+  ]
 }

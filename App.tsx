@@ -32,9 +32,9 @@ const App: React.FC = () => {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<number | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
-    // Listen for PWA install prompt
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       setDeferredPrompt(e);
@@ -47,6 +47,11 @@ const App: React.FC = () => {
     }
     loadData();
     autoCleanupAndCompress();
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      stopTracks();
+    };
   }, []);
 
   useEffect(() => {
@@ -54,11 +59,10 @@ const App: React.FC = () => {
     setCurrentLog(log || null);
   }, [selectedDate, logs]);
 
-  const handleInstallClick = async () => {
-    if (deferredPrompt) {
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      if (outcome === 'accepted') setDeferredPrompt(null);
+  const stopTracks = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
     }
   };
 
@@ -67,27 +71,38 @@ const App: React.FC = () => {
     setLogs(allLogs);
   };
 
+  const getSupportedMimeType = () => {
+    const types = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/mp4',
+      'audio/aac',
+      'audio/wav'
+    ];
+    for (const type of types) {
+      if (MediaRecorder.isTypeSupported(type)) return type;
+    }
+    return '';
+  };
+
   const startRecording = async () => {
     setMicError(null);
     try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("Device does not support audio recording in this environment.");
-      }
+      if (navigator.vibrate) navigator.vibrate(50);
 
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
-          channelCount: 1,
-          sampleRate: 16000,
           echoCancellation: true,
-          noiseSuppression: true
+          noiseSuppression: true,
+          autoGainControl: true
         } 
       });
-      
-      let mimeType = 'audio/webm';
-      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-        mimeType = 'audio/webm;codecs=opus';
-      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-        mimeType = 'audio/mp4'; 
+      streamRef.current = stream;
+
+      const mimeType = getSupportedMimeType();
+      if (!mimeType) {
+        throw new Error("Device does not support standard audio recording formats.");
       }
 
       const recorder = new MediaRecorder(stream, { mimeType });
@@ -108,7 +123,8 @@ const App: React.FC = () => {
         reader.readAsDataURL(audioBlob);
         reader.onloadend = async () => {
           const base64 = (reader.result as string).split(',')[1];
-          const newSegments = await transcribeAudioChunk(base64, offlineMode);
+          // CRITICAL FIX: Pass the actual mimeType to the transcription service
+          const newSegments = await transcribeAudioChunk(base64, offlineMode, mimeType);
           
           const segmentsWithAudio = newSegments.map(s => ({ ...s, audioId }));
           const today = new Date().toISOString().split('T')[0];
@@ -116,17 +132,18 @@ const App: React.FC = () => {
           const existing = await getLog(today);
           let updatedLog: DailyLog;
           
+          const durationToAdd = recordingSeconds / 60;
           if (existing) {
             updatedLog = {
               ...existing,
               transcripts: [...existing.transcripts, ...segmentsWithAudio],
-              recordingDurationMinutes: existing.recordingDurationMinutes + (recordingSeconds / 60)
+              recordingDurationMinutes: existing.recordingDurationMinutes + durationToAdd
             };
           } else {
             updatedLog = {
               date: today,
               transcripts: segmentsWithAudio,
-              recordingDurationMinutes: recordingSeconds / 60
+              recordingDurationMinutes: durationToAdd
             };
           }
           
@@ -137,29 +154,34 @@ const App: React.FC = () => {
         };
       };
 
-      recorder.start();
+      recorder.start(); 
       setIsRecording(true);
       timerRef.current = window.setInterval(() => {
         setRecordingSeconds(s => s + 1);
       }, 1000);
 
     } catch (err: any) {
-      console.error("Mic Access Error:", err);
+      console.error("Recording Error:", err);
       let errorMsg = "Microphone Error: " + err.message;
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        errorMsg = "Mic blocked. If using Chrome, check site settings (Lock icon in address bar).";
+        errorMsg = "Microphone permission denied. Please allow access in browser settings.";
+      } else if (err.name === 'NotFoundError') {
+        errorMsg = "No microphone detected on this device.";
       }
       setMicError(errorMsg);
-      alert(errorMsg);
       setIsRecording(false);
+      stopTracks();
     }
   };
 
   const stopRecording = () => {
+    if (navigator.vibrate) navigator.vibrate([30, 30]);
+    
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
     }
+    stopTracks();
+    
     if (timerRef.current) {
       clearInterval(timerRef.current);
     }
@@ -184,7 +206,7 @@ const App: React.FC = () => {
 
   const handleDelete = async () => {
     if (!currentLog) return;
-    if (window.confirm("Delete all data for this day?")) {
+    if (window.confirm("Delete data for this day?")) {
       const audioIds = currentLog.transcripts.map(s => s.audioId).filter(Boolean) as string[];
       await deleteDayData(selectedDate, audioIds);
       await loadData();
@@ -192,30 +214,18 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#020d0a] text-emerald-50 font-sans selection:bg-emerald-500/30">
+    <div className="min-h-screen bg-[#020d0a] text-emerald-50 font-sans selection:bg-emerald-500/30 overflow-x-hidden">
       {apiKeyMissing && (
         <div className="bg-rose-500/20 border-b border-rose-500/30 px-4 py-2 text-[10px] text-center font-bold text-rose-300 uppercase tracking-widest z-[70] animate-pulse">
           <i className="fas fa-exclamation-triangle mr-2"></i>
-          API_KEY not detected. App will run in Mock/Demo mode.
-        </div>
-      )}
-
-      {deferredPrompt && (
-        <div className="bg-emerald-500/20 border-b border-emerald-500/30 px-4 py-3 flex items-center justify-between z-[70]">
-          <span className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Install app for better mic support</span>
-          <button 
-            onClick={handleInstallClick}
-            className="bg-emerald-500 text-slate-950 px-4 py-1 rounded-full text-[10px] font-black uppercase"
-          >
-            Install
-          </button>
+          API_KEY not detected. App will run in Demo mode.
         </div>
       )}
 
       {micError && (
-        <div className="bg-amber-500/20 border-b border-amber-500/30 px-4 py-2 text-[10px] text-center font-bold text-amber-200 uppercase tracking-widest z-[70]">
-          <i className="fas fa-microphone-slash mr-2"></i>
-          {micError}
+        <div className="bg-amber-500/20 border-b border-amber-500/30 px-4 py-3 text-[11px] text-center font-bold text-amber-200 uppercase tracking-widest z-[70] flex items-center justify-center gap-4">
+          <span><i className="fas fa-microphone-slash mr-2"></i> {micError}</span>
+          <button onClick={() => setMicError(null)} className="underline decoration-dotted">Dismiss</button>
         </div>
       )}
 
@@ -224,41 +234,50 @@ const App: React.FC = () => {
           <NavBtn icon="fa-stream" active={activeView === 'timeline'} onClick={() => setActiveView('timeline')} />
           <NavBtn icon="fa-calendar-alt" active={activeView === 'calendar'} onClick={() => setActiveView('calendar')} />
           
-          <button 
-            onClick={isRecording ? stopRecording : startRecording}
-            className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-500 -translate-y-4 shadow-2xl ${
-              isRecording 
-              ? 'bg-rose-500 scale-110 animate-pulse' 
-              : 'bg-emerald-500 hover:scale-105 active:scale-95'
-            }`}
-          >
-            <i className={`fas ${isRecording ? 'fa-stop' : 'fa-microphone'} text-2xl text-slate-950`}></i>
-          </button>
+          <div className="relative">
+            {isRecording && (
+              <div className="absolute inset-0 bg-rose-500 rounded-full animate-ping opacity-25 -translate-y-4"></div>
+            )}
+            <button 
+              onClick={isRecording ? stopRecording : startRecording}
+              className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-500 -translate-y-4 shadow-2xl relative z-10 ${
+                isRecording 
+                ? 'bg-rose-500 scale-110 shadow-[0_0_30px_rgba(244,63,94,0.4)]' 
+                : 'bg-emerald-500 hover:scale-105 active:scale-95 shadow-[0_0_20px_rgba(16,185,129,0.2)]'
+              }`}
+            >
+              <i className={`fas ${isRecording ? 'fa-stop' : 'fa-microphone'} text-2xl text-slate-950`}></i>
+            </button>
+          </div>
 
           <NavBtn icon="fa-chart-pie" active={activeView === 'summary'} onClick={() => setActiveView('summary')} />
           <NavBtn icon="fa-search" active={activeView === 'search'} onClick={() => setActiveView('search')} />
-          <NavBtn icon="fa-cog" active={activeView === 'settings'} onClick={() => setActiveView('settings')} />
         </div>
       </nav>
 
-      <main className="max-w-2xl mx-auto px-6 pt-12 pb-32">
+      <main className="max-w-2xl mx-auto px-4 sm:px-6 pt-12 pb-32">
         <header className="flex items-center justify-between mb-12">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
               <i className="fas fa-microchip text-slate-950 text-xl"></i>
             </div>
             <div>
-              <h1 className="text-2xl font-black tracking-tighter text-emerald-50">DAYTRACK</h1>
-              <p className="text-[9px] font-black text-emerald-800 uppercase tracking-[0.3em]">AI Private Log v2.0</p>
+              <h1 className="text-xl sm:text-2xl font-black tracking-tighter text-emerald-50 leading-none">DAYTRACK</h1>
+              <p className="text-[9px] font-black text-emerald-800 uppercase tracking-[0.3em] mt-1">AI Private Log v2.5</p>
             </div>
           </div>
           
           <div className="flex flex-col items-end">
              {isRecording && (
-                <div className="flex items-center gap-2 text-rose-500 animate-pulse">
-                   <div className="w-2 h-2 rounded-full bg-rose-500"></div>
-                   <span className="text-xs font-mono font-black">{Math.floor(recordingSeconds/60)}:{(recordingSeconds%60).toString().padStart(2, '0')}</span>
+                <div className="flex items-center gap-2 text-rose-500 animate-pulse bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/20">
+                   <div className="w-1.5 h-1.5 rounded-full bg-rose-500"></div>
+                   <span className="text-[10px] font-mono font-black">{Math.floor(recordingSeconds/60)}:{(recordingSeconds%60).toString().padStart(2, '0')}</span>
                 </div>
+             )}
+             {!isRecording && (
+               <button onClick={() => setActiveView('settings')} className={`p-2 rounded-lg transition-colors ${activeView === 'settings' ? 'text-emerald-400 bg-emerald-400/10' : 'text-emerald-900'}`}>
+                  <i className="fas fa-cog text-lg"></i>
+               </button>
              )}
           </div>
         </header>
@@ -308,8 +327,8 @@ const App: React.FC = () => {
 const NavBtn = ({ icon, active, onClick }: { icon: string, active: boolean, onClick: () => void }) => (
   <button 
     onClick={onClick}
-    className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${
-      active ? 'bg-emerald-500/10 text-emerald-400' : 'text-emerald-900 hover:text-emerald-700'
+    className={`w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-all ${
+      active ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-400/20' : 'text-emerald-900 hover:text-emerald-700'
     }`}
   >
     <i className={`fas ${icon} text-lg`}></i>
