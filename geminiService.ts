@@ -2,6 +2,13 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ConversationSegment, DailySummary } from "./types";
 
+// Enhanced API Key retrieval to be more resilient
+const getApiKey = () => {
+  // Try different ways environment variables are often injected in browser environments
+  const key = process.env.API_KEY || (window as any).process?.env?.API_KEY;
+  return key;
+};
+
 const MOCK_SENTENCES = [
   "I was thinking about the project we discussed this morning.",
   "The weather is quite pleasant today, isn't it?",
@@ -12,10 +19,10 @@ const MOCK_SENTENCES = [
 ];
 
 export const transcribeAudioChunk = async (audioBase64: string, offlineMode: boolean = false): Promise<ConversationSegment[]> => {
-  const apiKey = process.env.API_KEY;
+  const apiKey = getApiKey();
   
   if (!apiKey || offlineMode) {
-    console.warn("API_KEY missing or offline mode active. Using mock data.");
+    console.warn("API_KEY missing or offline mode active. Falling back to mock data.");
     const now = new Date();
     const randomSentence = MOCK_SENTENCES[Math.floor(Math.random() * MOCK_SENTENCES.length)];
     return [{
@@ -29,15 +36,14 @@ export const transcribeAudioChunk = async (audioBase64: string, offlineMode: boo
     }];
   }
 
-  const ai = new GoogleGenAI({ apiKey });
-
   try {
+    const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: {
         parts: [
           { inlineData: { mimeType: "audio/webm", data: audioBase64 } },
-          { text: "Transcribe this audio precisely. Return a JSON array of segments. Identify different speakers if present." }
+          { text: "Transcribe this audio. Identify speakers. Return valid JSON array." }
         ]
       },
       config: {
@@ -64,30 +70,30 @@ export const transcribeAudioChunk = async (audioBase64: string, offlineMode: boo
     const jsonStr = response.text?.trim();
     return JSON.parse(jsonStr || "[]");
   } catch (error) {
-    console.error("Transcription API error:", error);
+    console.error("Gemini API Error:", error);
     return [];
   }
 };
 
 export const generateDailySummary = async (transcripts: ConversationSegment[]): Promise<DailySummary> => {
-  const apiKey = process.env.API_KEY;
+  const apiKey = getApiKey();
   if (!apiKey) {
     return { 
-      overview: "No API Key configured. Please add API_KEY to your environment variables.", 
-      keyEvents: ["Demo Event 1", "Demo Event 2"], 
-      actionItems: ["Configure API Key"], 
+      overview: "Set API_KEY in Netlify and redeploy for AI summaries.", 
+      keyEvents: ["Waiting for configuration"], 
+      actionItems: ["Add API_KEY variable"], 
       mood: "Neutral", 
       topics: ["System"] 
     };
   }
 
-  const ai = new GoogleGenAI({ apiKey });
-  const fullText = transcripts.map(t => `[${t.startTime}] ${t.speaker}: ${t.text}`).join("\n");
-  
   try {
+    const ai = new GoogleGenAI({ apiKey });
+    const fullText = transcripts.map(t => `[${t.startTime}] ${t.speaker}: ${t.text}`).join("\n");
+    
     const response = await ai.models.generateContent({
       model: "gemini-3-pro-preview",
-      contents: `Provide a structured summary of this day log:\n\n${fullText}`,
+      contents: `Summarize this day log:\n\n${fullText}`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -107,7 +113,6 @@ export const generateDailySummary = async (transcripts: ConversationSegment[]): 
     const jsonStr = response.text?.trim();
     return JSON.parse(jsonStr || "{}");
   } catch (error) {
-    console.error("Summary API error:", error);
     return { overview: "Summary generation failed.", keyEvents: [], actionItems: [], mood: "N/A", topics: [] };
   }
 };

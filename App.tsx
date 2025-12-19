@@ -10,6 +10,9 @@ import SearchView from './components/SearchView';
 import StatsOverview from './components/StatsOverview';
 import ModelManager from './components/ModelManager';
 
+// Key check outside component for better initialization
+const checkKey = () => process.env.API_KEY || (window as any).process?.env?.API_KEY;
+
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState<ViewType>('timeline');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -30,8 +33,10 @@ const App: React.FC = () => {
 
   useEffect(() => {
     // Basic check for API key
-    if (!process.env.API_KEY) {
+    if (!checkKey()) {
       setApiKeyMissing(true);
+    } else {
+      setApiKeyMissing(false);
     }
     loadData();
     autoCleanupAndCompress();
@@ -51,7 +56,6 @@ const App: React.FC = () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Determine best supported mime type
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
         ? 'audio/webm;codecs=opus' 
         : 'audio/webm';
@@ -109,9 +113,9 @@ const App: React.FC = () => {
         setRecordingSeconds(s => s + 1);
       }, 1000);
     } catch (err) {
-      console.error("Mic access denied or recording error", err);
+      console.error("Mic access denied", err);
       setIsRecording(false);
-      alert("Unable to access microphone. Please check permissions.");
+      alert("Unable to access microphone.");
     }
   };
 
@@ -144,7 +148,7 @@ const App: React.FC = () => {
 
   const handleDelete = async () => {
     if (!currentLog) return;
-    if (window.confirm("Are you sure you want to delete all data for this day?")) {
+    if (window.confirm("Delete all data for this day?")) {
       const audioIds = currentLog.transcripts.map(s => s.audioId).filter(Boolean) as string[];
       await deleteDayData(selectedDate, audioIds);
       await loadData();
@@ -154,9 +158,9 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#020d0a] text-emerald-50 font-sans selection:bg-emerald-500/30">
       {apiKeyMissing && (
-        <div className="bg-amber-500/20 border-b border-amber-500/30 px-4 py-2 text-[10px] text-center font-bold text-amber-300 uppercase tracking-widest z-[70]">
+        <div className="bg-rose-500/20 border-b border-rose-500/30 px-4 py-2 text-[10px] text-center font-bold text-rose-300 uppercase tracking-widest z-[70] animate-pulse">
           <i className="fas fa-exclamation-triangle mr-2"></i>
-          API_KEY not detected in deployment settings. Using Demo/Offline mode.
+          API_KEY not detected. Update Netlify Site Settings and Redeploy.
         </div>
       )}
 
