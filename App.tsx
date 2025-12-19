@@ -22,6 +22,9 @@ const App: React.FC = () => {
   const [currentLog, setCurrentLog] = useState<DailyLog | null>(null);
   const [offlineMode, setOfflineMode] = useState(false);
   const [apiKeyMissing, setApiKeyMissing] = useState(false);
+  const [micError, setMicError] = useState<string | null>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  
   const [models, setModels] = useState<ModelStatus[]>([
     { id: 'en-base', name: 'English Base', size: '140MB', status: 'ready', progress: 100 },
     { id: 'hi-v1', name: 'Hindi Optimized', size: '280MB', status: 'none', progress: 0 }
@@ -31,6 +34,12 @@ const App: React.FC = () => {
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
+    // Listen for PWA install prompt
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    });
+
     if (!checkKey()) {
       setApiKeyMissing(true);
     } else {
@@ -38,11 +47,6 @@ const App: React.FC = () => {
     }
     loadData();
     autoCleanupAndCompress();
-    
-    // Check if browser supports mediaDevices
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      console.error("This browser/wrapper does not support audio recording.");
-    }
   }, []);
 
   useEffect(() => {
@@ -50,25 +54,41 @@ const App: React.FC = () => {
     setCurrentLog(log || null);
   }, [selectedDate, logs]);
 
+  const handleInstallClick = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') setDeferredPrompt(null);
+    }
+  };
+
   const loadData = async () => {
     const allLogs = await getAllLogs();
     setLogs(allLogs);
   };
 
   const startRecording = async () => {
+    setMicError(null);
     try {
-      // Detailed permission request for Android WebViews
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Device does not support audio recording in this environment.");
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
+          channelCount: 1,
+          sampleRate: 16000,
           echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
+          noiseSuppression: true
         } 
       });
       
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-        ? 'audio/webm;codecs=opus' 
-        : 'audio/webm';
+      let mimeType = 'audio/webm';
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        mimeType = 'audio/webm;codecs=opus';
+      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+        mimeType = 'audio/mp4'; 
+      }
 
       const recorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = recorder;
@@ -79,7 +99,7 @@ const App: React.FC = () => {
       };
       
       recorder.onstop = async () => {
-        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+        const audioBlob = new Blob(chunks, { type: mimeType });
         const audioId = `audio_${Date.now()}`;
         await saveAudio(audioId, audioBlob);
 
@@ -122,13 +142,14 @@ const App: React.FC = () => {
       timerRef.current = window.setInterval(() => {
         setRecordingSeconds(s => s + 1);
       }, 1000);
+
     } catch (err: any) {
-      console.error("Microphone Access Error:", err);
-      let errorMsg = "Unable to access microphone.";
-      if (err.name === 'NotAllowedError') errorMsg = "Permission Denied: Go to Android Settings > Apps > DayTrack > Permissions and enable Microphone.";
-      if (err.name === 'NotFoundError') errorMsg = "No microphone found on this device.";
-      if (err.name === 'SecurityError') errorMsg = "Security Block: Mic only works over HTTPS or secure app wrappers.";
-      
+      console.error("Mic Access Error:", err);
+      let errorMsg = "Microphone Error: " + err.message;
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        errorMsg = "Mic blocked. If using Chrome, check site settings (Lock icon in address bar).";
+      }
+      setMicError(errorMsg);
       alert(errorMsg);
       setIsRecording(false);
     }
@@ -175,7 +196,26 @@ const App: React.FC = () => {
       {apiKeyMissing && (
         <div className="bg-rose-500/20 border-b border-rose-500/30 px-4 py-2 text-[10px] text-center font-bold text-rose-300 uppercase tracking-widest z-[70] animate-pulse">
           <i className="fas fa-exclamation-triangle mr-2"></i>
-          API_KEY not detected. Update Netlify Site Settings and Redeploy.
+          API_KEY not detected. App will run in Mock/Demo mode.
+        </div>
+      )}
+
+      {deferredPrompt && (
+        <div className="bg-emerald-500/20 border-b border-emerald-500/30 px-4 py-3 flex items-center justify-between z-[70]">
+          <span className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Install app for better mic support</span>
+          <button 
+            onClick={handleInstallClick}
+            className="bg-emerald-500 text-slate-950 px-4 py-1 rounded-full text-[10px] font-black uppercase"
+          >
+            Install
+          </button>
+        </div>
+      )}
+
+      {micError && (
+        <div className="bg-amber-500/20 border-b border-amber-500/30 px-4 py-2 text-[10px] text-center font-bold text-amber-200 uppercase tracking-widest z-[70]">
+          <i className="fas fa-microphone-slash mr-2"></i>
+          {micError}
         </div>
       )}
 

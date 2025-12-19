@@ -1,0 +1,26 @@
+
+{
+  "short_name": "DayTrack",
+  "name": "DayTrack - AI Life Logger",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3209/3209101.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3209/3209101.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#020d0a",
+  "background_color": "#020d0a",
+  "orientation": "portrait",
+  "scope": "/",
+  "description": "Sophisticated AI-powered life logging and transcription app."
+}
