@@ -10,7 +10,6 @@ import SearchView from './components/SearchView';
 import StatsOverview from './components/StatsOverview';
 import ModelManager from './components/ModelManager';
 
-// Key check outside component for better initialization
 const checkKey = () => process.env.API_KEY || (window as any).process?.env?.API_KEY;
 
 const App: React.FC = () => {
@@ -32,7 +31,6 @@ const App: React.FC = () => {
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // Basic check for API key
     if (!checkKey()) {
       setApiKeyMissing(true);
     } else {
@@ -40,6 +38,11 @@ const App: React.FC = () => {
     }
     loadData();
     autoCleanupAndCompress();
+    
+    // Check if browser supports mediaDevices
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      console.error("This browser/wrapper does not support audio recording.");
+    }
   }, []);
 
   useEffect(() => {
@@ -54,7 +57,14 @@ const App: React.FC = () => {
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Detailed permission request for Android WebViews
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
       
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
         ? 'audio/webm;codecs=opus' 
@@ -112,10 +122,15 @@ const App: React.FC = () => {
       timerRef.current = window.setInterval(() => {
         setRecordingSeconds(s => s + 1);
       }, 1000);
-    } catch (err) {
-      console.error("Mic access denied", err);
+    } catch (err: any) {
+      console.error("Microphone Access Error:", err);
+      let errorMsg = "Unable to access microphone.";
+      if (err.name === 'NotAllowedError') errorMsg = "Permission Denied: Go to Android Settings > Apps > DayTrack > Permissions and enable Microphone.";
+      if (err.name === 'NotFoundError') errorMsg = "No microphone found on this device.";
+      if (err.name === 'SecurityError') errorMsg = "Security Block: Mic only works over HTTPS or secure app wrappers.";
+      
+      alert(errorMsg);
       setIsRecording(false);
-      alert("Unable to access microphone.");
     }
   };
 
