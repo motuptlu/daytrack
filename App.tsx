@@ -10,7 +10,9 @@ import SearchView from './components/SearchView';
 import StatsOverview from './components/StatsOverview';
 import ModelManager from './components/ModelManager';
 
-const checkKey = () => process.env.API_KEY || (window as any).process?.env?.API_KEY;
+const checkKey = () => !!process.env.API_KEY;
+
+type PermissionState = 'prompt' | 'granted' | 'denied' | 'unknown';
 
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState<ViewType>('timeline');
@@ -23,30 +25,19 @@ const App: React.FC = () => {
   const [offlineMode, setOfflineMode] = useState(false);
   const [apiKeyMissing, setApiKeyMissing] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [permissionStatus, setPermissionStatus] = useState<PermissionState>('unknown');
   
-  const [models, setModels] = useState<ModelStatus[]>([
-    { id: 'en-base', name: 'English Base', size: '140MB', status: 'ready', progress: 100 },
-    { id: 'hi-v1', name: 'Hindi Optimized', size: '280MB', status: 'none', progress: 0 }
-  ]);
-
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
-    window.addEventListener('beforeinstallprompt', (e) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-    });
-
     if (!checkKey()) {
       setApiKeyMissing(true);
-    } else {
-      setApiKeyMissing(false);
     }
     loadData();
     autoCleanupAndCompress();
+    checkPermissions();
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -58,6 +49,33 @@ const App: React.FC = () => {
     const log = logs.find(l => l.date === selectedDate);
     setCurrentLog(log || null);
   }, [selectedDate, logs]);
+
+  const checkPermissions = async () => {
+    if (navigator.permissions && navigator.permissions.query) {
+      try {
+        const result = await navigator.permissions.query({ name: 'microphone' as any });
+        setPermissionStatus(result.state as PermissionState);
+        result.onchange = () => {
+          setPermissionStatus(result.state as PermissionState);
+        };
+      } catch (e) {
+        console.warn("Permissions API not supported for microphone");
+      }
+    }
+  };
+
+  const requestInitialPermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(t => t.stop());
+      setPermissionStatus('granted');
+      setMicError(null);
+    } catch (err: any) {
+      console.error("Permission request failed:", err);
+      setPermissionStatus('denied');
+      setMicError("Microphone access was denied. Please enable it in your settings.");
+    }
+  };
 
   const stopTracks = () => {
     if (streamRef.current) {
@@ -81,13 +99,21 @@ const App: React.FC = () => {
       'audio/wav'
     ];
     for (const type of types) {
-      if (MediaRecorder.isTypeSupported(type)) return type;
+      if (MediaRecorder.isTypeSupported(type)) {
+        return type;
+      }
     }
     return '';
   };
 
   const startRecording = async () => {
     setMicError(null);
+    
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setMicError("Your device or browser doesn't support audio recording.");
+      return;
+    }
+
     try {
       if (navigator.vibrate) navigator.vibrate(50);
 
@@ -98,11 +124,13 @@ const App: React.FC = () => {
           autoGainControl: true
         } 
       });
+      
       streamRef.current = stream;
+      setPermissionStatus('granted');
 
       const mimeType = getSupportedMimeType();
       if (!mimeType) {
-        throw new Error("Device does not support standard audio recording formats.");
+        throw new Error("No supported audio codec found.");
       }
 
       const recorder = new MediaRecorder(stream, { mimeType });
@@ -123,7 +151,6 @@ const App: React.FC = () => {
         reader.readAsDataURL(audioBlob);
         reader.onloadend = async () => {
           const base64 = (reader.result as string).split(',')[1];
-          // CRITICAL FIX: Pass the actual mimeType to the transcription service
           const newSegments = await transcribeAudioChunk(base64, offlineMode, mimeType);
           
           const segmentsWithAudio = newSegments.map(s => ({ ...s, audioId }));
@@ -132,18 +159,17 @@ const App: React.FC = () => {
           const existing = await getLog(today);
           let updatedLog: DailyLog;
           
-          const durationToAdd = recordingSeconds / 60;
           if (existing) {
             updatedLog = {
               ...existing,
               transcripts: [...existing.transcripts, ...segmentsWithAudio],
-              recordingDurationMinutes: existing.recordingDurationMinutes + durationToAdd
+              recordingDurationMinutes: existing.recordingDurationMinutes + (recordingSeconds / 60)
             };
           } else {
             updatedLog = {
               date: today,
               transcripts: segmentsWithAudio,
-              recordingDurationMinutes: durationToAdd
+              recordingDurationMinutes: recordingSeconds / 60
             };
           }
           
@@ -154,21 +180,25 @@ const App: React.FC = () => {
         };
       };
 
-      recorder.start(); 
+      recorder.start();
       setIsRecording(true);
+      
       timerRef.current = window.setInterval(() => {
         setRecordingSeconds(s => s + 1);
       }, 1000);
 
     } catch (err: any) {
-      console.error("Recording Error:", err);
-      let errorMsg = "Microphone Error: " + err.message;
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        errorMsg = "Microphone permission denied. Please allow access in browser settings.";
+      console.error("Recording failed to start:", err);
+      let msg = "Mic Error: " + (err.message || "Unknown error");
+      
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' || err.name === 'SecurityError') {
+        msg = "Microphone access denied. Please allow microphone access in your settings to record.";
+        setPermissionStatus('denied');
       } else if (err.name === 'NotFoundError') {
-        errorMsg = "No microphone detected on this device.";
+        msg = "No microphone found on this device.";
       }
-      setMicError(errorMsg);
+      
+      setMicError(msg);
       setIsRecording(false);
       stopTracks();
     }
@@ -184,21 +214,21 @@ const App: React.FC = () => {
     
     if (timerRef.current) {
       clearInterval(timerRef.current);
+      timerRef.current = null;
     }
     setIsRecording(false);
   };
 
   const handleSummarize = async () => {
-    if (!currentLog) return;
+    if (!currentLog || currentLog.transcripts.length === 0) return;
     setIsProcessing(true);
     try {
       const summary = await generateDailySummary(currentLog.transcripts);
-      const updated = { ...currentLog, summary };
-      await saveLog(updated);
+      const updatedLog = { ...currentLog, summary };
+      await saveLog(updatedLog);
       await loadData();
-      setActiveView('summary');
     } catch (error) {
-      console.error("Summary failed", error);
+      console.error("Summary generation failed:", error);
     } finally {
       setIsProcessing(false);
     }
@@ -206,26 +236,68 @@ const App: React.FC = () => {
 
   const handleDelete = async () => {
     if (!currentLog) return;
-    if (window.confirm("Delete data for this day?")) {
-      const audioIds = currentLog.transcripts.map(s => s.audioId).filter(Boolean) as string[];
-      await deleteDayData(selectedDate, audioIds);
+    if (window.confirm(`Delete all data for ${currentLog.date}?`)) {
+      const audioIds = currentLog.transcripts.map(t => t.audioId).filter((id): id is string => !!id);
+      await deleteDayData(currentLog.date, audioIds);
       await loadData();
+      setCurrentLog(null);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#020d0a] text-emerald-50 font-sans selection:bg-emerald-500/30 overflow-x-hidden">
-      {apiKeyMissing && (
-        <div className="bg-rose-500/20 border-b border-rose-500/30 px-4 py-2 text-[10px] text-center font-bold text-rose-300 uppercase tracking-widest z-[70] animate-pulse">
-          <i className="fas fa-exclamation-triangle mr-2"></i>
-          API_KEY not detected. App will run in Demo mode.
-        </div>
-      )}
+    <div className="min-h-screen bg-[#020d0a] text-emerald-50 font-sans selection:bg-emerald-500/30 overflow-x-hidden pb-12">
+      
+      {/* Dynamic Headers for Keys and Permissions */}
+      <div className="fixed top-0 left-0 right-0 z-[100] flex flex-col gap-px">
+        {apiKeyMissing && (
+          <div className="bg-rose-500/20 backdrop-blur-md border-b border-rose-500/30 px-4 py-2 text-[10px] text-center font-bold text-rose-300 uppercase tracking-widest animate-pulse">
+            <i className="fas fa-exclamation-triangle mr-2"></i>
+            API_KEY Missing. Running in Demo Mode.
+          </div>
+        )}
 
-      {micError && (
-        <div className="bg-amber-500/20 border-b border-amber-500/30 px-4 py-3 text-[11px] text-center font-bold text-amber-200 uppercase tracking-widest z-[70] flex items-center justify-center gap-4">
-          <span><i className="fas fa-microphone-slash mr-2"></i> {micError}</span>
-          <button onClick={() => setMicError(null)} className="underline decoration-dotted">Dismiss</button>
+        {permissionStatus === 'prompt' && (
+          <div className="bg-emerald-500/90 text-slate-950 px-4 py-3 flex items-center justify-between shadow-2xl">
+            <div className="flex items-center gap-3">
+              <i className="fas fa-microphone text-sm"></i>
+              <span className="text-xs font-black uppercase tracking-tight">Microphone access required</span>
+            </div>
+            <button 
+              onClick={requestInitialPermission}
+              className="bg-slate-950 text-emerald-400 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform"
+            >
+              Enable
+            </button>
+          </div>
+        )}
+
+        {permissionStatus === 'denied' && (
+          <div className="bg-amber-500 text-slate-950 px-4 py-3 flex items-center justify-between shadow-2xl">
+            <div className="flex items-center gap-3">
+              <i className="fas fa-exclamation-circle text-sm"></i>
+              <span className="text-xs font-black uppercase tracking-tight">Mic access is blocked</span>
+            </div>
+            <button 
+              onClick={() => alert("To fix this:\n1. Open Android Settings\n2. Go to Apps > DayTrack\n3. Select Permissions\n4. Enable Microphone\n5. Restart the app.")}
+              className="bg-slate-950 text-amber-400 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest"
+            >
+              How to fix
+            </button>
+          </div>
+        )}
+      </div>
+
+      {micError && permissionStatus !== 'denied' && (
+        <div className="fixed top-12 left-2 right-2 bg-amber-500 text-slate-950 px-4 py-4 rounded-2xl shadow-2xl z-[90] animate-in slide-in-from-top duration-300">
+           <div className="flex items-start gap-4">
+              <i className="fas fa-exclamation-circle text-xl mt-1"></i>
+              <div className="flex-1">
+                 <p className="text-sm font-black leading-tight">{micError}</p>
+              </div>
+              <button onClick={() => setMicError(null)} className="bg-slate-950/10 p-2 rounded-lg">
+                 <i className="fas fa-times"></i>
+              </button>
+           </div>
         </div>
       )}
 
@@ -239,6 +311,12 @@ const App: React.FC = () => {
               <div className="absolute inset-0 bg-rose-500 rounded-full animate-ping opacity-25 -translate-y-4"></div>
             )}
             <button 
+              onPointerDown={() => {
+                if (window.AudioContext || (window as any).webkitAudioContext) {
+                   const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+                   if (ctx.state === 'suspended') ctx.resume();
+                }
+              }}
               onClick={isRecording ? stopRecording : startRecording}
               className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-500 -translate-y-4 shadow-2xl relative z-10 ${
                 isRecording 
@@ -255,7 +333,7 @@ const App: React.FC = () => {
         </div>
       </nav>
 
-      <main className="max-w-2xl mx-auto px-4 sm:px-6 pt-12 pb-32">
+      <main className="max-w-2xl mx-auto px-4 sm:px-6 pt-16 pb-32">
         <header className="flex items-center justify-between mb-12">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
@@ -263,7 +341,7 @@ const App: React.FC = () => {
             </div>
             <div>
               <h1 className="text-xl sm:text-2xl font-black tracking-tighter text-emerald-50 leading-none">DAYTRACK</h1>
-              <p className="text-[9px] font-black text-emerald-800 uppercase tracking-[0.3em] mt-1">AI Private Log v2.5</p>
+              <p className="text-[9px] font-black text-emerald-800 uppercase tracking-[0.3em] mt-1">AI Private Log v2.7</p>
             </div>
           </div>
           
@@ -315,8 +393,8 @@ const App: React.FC = () => {
           <ModelManager 
             offlineMode={offlineMode} 
             setOfflineMode={setOfflineMode} 
-            initialModels={models}
-            onStatusChange={setModels}
+            initialModels={[]}
+            onStatusChange={() => {}}
           />
         )}
       </main>

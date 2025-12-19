@@ -2,17 +2,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ConversationSegment, DailySummary } from "./types";
 
-const getApiKey = () => {
-  try {
-    const key = (typeof process !== 'undefined' && process.env?.API_KEY) || 
-                (window as any).process?.env?.API_KEY || 
-                (window as any).API_KEY;
-    return key || null;
-  } catch (e) {
-    return null;
-  }
-};
-
 const MOCK_SENTENCES = [
   "I was thinking about the project we discussed this morning.",
   "The weather is quite pleasant today, isn't it?",
@@ -27,7 +16,8 @@ export const transcribeAudioChunk = async (
   offlineMode: boolean = false, 
   mimeType: string = "audio/webm"
 ): Promise<ConversationSegment[]> => {
-  const apiKey = getApiKey();
+  // Fix: Directly use process.env.API_KEY as per guidelines
+  const apiKey = process.env.API_KEY;
   
   if (!apiKey || offlineMode) {
     console.warn("API_KEY missing or offline mode active. Falling back to mock data.");
@@ -45,7 +35,8 @@ export const transcribeAudioChunk = async (
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
+    // Fix: Use recommended SDK initialization pattern
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: {
@@ -75,6 +66,7 @@ export const transcribeAudioChunk = async (
       }
     });
 
+    // Fix: Access .text property directly (not as a method)
     const jsonStr = response.text?.trim();
     return JSON.parse(jsonStr || "[]");
   } catch (error) {
@@ -84,7 +76,7 @@ export const transcribeAudioChunk = async (
 };
 
 export const generateDailySummary = async (transcripts: ConversationSegment[]): Promise<DailySummary> => {
-  const apiKey = getApiKey();
+  const apiKey = process.env.API_KEY;
   if (!apiKey) {
     return { 
       overview: "Set API_KEY in your hosting provider settings.", 
@@ -96,7 +88,8 @@ export const generateDailySummary = async (transcripts: ConversationSegment[]): 
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
+    // Fix: Use recommended SDK initialization pattern
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
     const fullText = transcripts.map(t => `[${t.startTime}] ${t.speaker}: ${t.text}`).join("\n");
     
     const response = await ai.models.generateContent({
@@ -118,9 +111,11 @@ export const generateDailySummary = async (transcripts: ConversationSegment[]): 
       }
     });
 
+    // Fix: Access .text property directly (not as a method)
     const jsonStr = response.text?.trim();
     return JSON.parse(jsonStr || "{}");
   } catch (error) {
+    console.error("Summary generation failed:", error);
     return { overview: "Summary generation failed.", keyEvents: [], actionItems: [], mood: "N/A", topics: [] };
   }
 };
