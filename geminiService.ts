@@ -4,9 +4,15 @@ import { ConversationSegment, DailySummary } from "./types";
 
 // Enhanced API Key retrieval to be more resilient
 const getApiKey = () => {
-  // Try different ways environment variables are often injected in browser environments
-  const key = process.env.API_KEY || (window as any).process?.env?.API_KEY;
-  return key;
+  try {
+    // Check multiple possible locations for the key
+    const key = (typeof process !== 'undefined' && process.env?.API_KEY) || 
+                (window as any).process?.env?.API_KEY || 
+                (window as any).API_KEY;
+    return key || null;
+  } catch (e) {
+    return null;
+  }
 };
 
 const MOCK_SENTENCES = [
@@ -79,9 +85,9 @@ export const generateDailySummary = async (transcripts: ConversationSegment[]): 
   const apiKey = getApiKey();
   if (!apiKey) {
     return { 
-      overview: "Set API_KEY in Netlify and redeploy for AI summaries.", 
-      keyEvents: ["Waiting for configuration"], 
-      actionItems: ["Add API_KEY variable"], 
+      overview: "Set API_KEY in your hosting provider settings (e.g. Netlify/Vercel) and redeploy.", 
+      keyEvents: ["Configuration Missing"], 
+      actionItems: ["Add API_KEY environment variable"], 
       mood: "Neutral", 
       topics: ["System"] 
     };
