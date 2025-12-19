@@ -20,6 +20,8 @@ const App: React.FC = () => {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   
+  const [apiKeyMissing, setApiKeyMissing] = useState(false);
+
   const wakeLockRef = useRef<any>(null);
   const timerIntervalRef = useRef<number | null>(null);
   const todayStr = new Date().toISOString().split('T')[0];
@@ -35,6 +37,16 @@ const App: React.FC = () => {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunkIntervalRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    // Check for API key
+    const key = (window as any).process?.env?.API_KEY || (typeof process !== 'undefined' ? process.env?.API_KEY : "");
+    if (!key && !offlineMode) {
+      setApiKeyMissing(true);
+    } else {
+      setApiKeyMissing(false);
+    }
+  }, [offlineMode]);
 
   useEffect(() => {
     autoCleanupAndCompress();
@@ -143,7 +155,15 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col min-h-screen bg-[#020d0a] text-emerald-50">
-      {/* Header - Fixed & Compact */}
+      {/* Configuration Alert */}
+      {apiKeyMissing && (
+        <div className="bg-rose-500/20 border-b border-rose-500/30 px-4 py-2 text-[10px] text-center font-bold text-rose-300 uppercase tracking-widest z-[70]">
+          <i className="fas fa-exclamation-triangle mr-2"></i>
+          API_KEY is not configured in Netlify Environment Variables. App will run in Offline display only.
+        </div>
+      )}
+
+      {/* Header */}
       <header className="px-4 py-4 sm:p-6 border-b border-emerald-900/20 flex justify-between items-center sticky top-0 bg-[#020d0a]/95 backdrop-blur-xl z-[60]">
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="w-8 h-8 sm:w-10 sm:h-10 bg-emerald-500 rounded-lg sm:rounded-xl flex items-center justify-center shadow-[0_0_15px_rgba(16,185,129,0.2)]">
@@ -219,7 +239,7 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      {/* Record Controls - Floating Bottom Left */}
+      {/* Record Controls */}
       <div className="fixed bottom-6 left-6 z-[100] flex flex-col-reverse sm:flex-row items-start sm:items-center gap-4 pointer-events-none">
         <button 
           onClick={isRecording ? stopRecording : startRecording}

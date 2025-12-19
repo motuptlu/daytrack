@@ -2,46 +2,51 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ConversationSegment, DailySummary } from "./types";
 
-// Safe access to environment variables in browser
 const getApiKey = () => {
+  // Check both window.process and standard process
+  const key = (window as any).process?.env?.API_KEY || (typeof process !== 'undefined' ? process.env?.API_KEY : "");
+  return key || "";
+};
+
+const initAI = () => {
+  const key = getApiKey();
+  if (!key) return null;
   try {
-    return process.env.API_KEY || "";
+    return new GoogleGenAI({ apiKey: key });
   } catch (e) {
-    console.error("Could not access process.env.API_KEY. Ensure your build tool is injecting it or it's set in Netlify.");
-    return "";
+    console.error("Failed to initialize GoogleGenAI", e);
+    return null;
   }
 };
 
-const apiKey = getApiKey();
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
-
 export const transcribeAudioChunk = async (audioBase64: string, offlineMode: boolean = false): Promise<ConversationSegment[]> => {
+  const ai = initAI();
+  
   if (!ai && !offlineMode) {
-    console.error("Gemini AI is not initialized. Please check your API Key.");
+    console.warn("API_KEY is missing. Falling back to offline display or empty response.");
     return [];
   }
 
   if (offlineMode) {
     const now = new Date();
-    const timestamp = now.toLocaleTimeString('en-GB');
     return [{
       id: Math.random().toString(36).substr(2, 9),
-      startTime: timestamp,
+      startTime: now.toLocaleTimeString('en-GB'),
       offsetInAudio: 0,
       duration: 30,
       speaker: "You",
-      text: "Offline mode capture: " + timestamp,
+      text: "Local Capture (Offline Mode Active)",
       confidence: 1.0
     }];
   }
 
   try {
     const response = await ai!.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.0-flash-exp", // Using a stable model name for better compatibility
       contents: {
         parts: [
           { inlineData: { mimeType: "audio/mp3", data: audioBase64 } },
-          { text: "Transcribe this 30-second audio precisely. Return ONLY valid JSON as per the requested schema." }
+          { text: "Transcribe this audio precisely. Return JSON only." }
         ]
       },
       config: {
@@ -73,16 +78,15 @@ export const transcribeAudioChunk = async (audioBase64: string, offlineMode: boo
 };
 
 export const generateDailySummary = async (transcripts: ConversationSegment[]): Promise<DailySummary> => {
-  if (!ai) {
-    return { overview: "AI not available", keyEvents: [], actionItems: [], mood: "N/A", topics: [] };
-  }
+  const ai = initAI();
+  if (!ai) return { overview: "AI Configuration missing", keyEvents: [], actionItems: [], mood: "N/A", topics: [] };
 
   const fullText = transcripts.map(t => `[${t.startTime}] ${t.speaker}: ${t.text}`).join("\n");
   
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-pro-preview",
-      contents: `Generate a daily summary for these life logs:\n\n${fullText}`,
+      model: "gemini-2.0-flash-exp",
+      contents: `Summarize this log:\n\n${fullText}`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -101,7 +105,6 @@ export const generateDailySummary = async (transcripts: ConversationSegment[]): 
 
     return JSON.parse(response.text || "{}");
   } catch (error) {
-    console.error("Summary generation error:", error);
-    return { overview: "Error generating summary", keyEvents: [], actionItems: [], mood: "N/A", topics: [] };
+    return { overview: "Summary failed", keyEvents: [], actionItems: [], mood: "N/A", topics: [] };
   }
 };
