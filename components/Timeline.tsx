@@ -27,24 +27,19 @@ const Timeline: React.FC<TimelineProps> = ({ log, onSummarize, onDelete, isProce
     return active ? active.id : null;
   }, [playingAudioId, currentTime, log]);
 
-  // Smoother scrolling logic
   useEffect(() => {
     if (activeSegmentId) {
       const element = document.getElementById(`segment-${activeSegmentId}`);
       if (element) {
-        element.scrollIntoView({ 
-          behavior: 'smooth', 
-          block: 'center'
-        });
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
   }, [activeSegmentId]);
 
   const playAudio = async (audioId: string) => {
     if (playingAudioId === audioId && audioRef.current) {
-      if (audioRef.current.paused) {
-        audioRef.current.play();
-      } else {
+      if (audioRef.current.paused) audioRef.current.play();
+      else {
         audioRef.current.pause();
         setPlayingAudioId(null);
       }
@@ -57,7 +52,6 @@ const Timeline: React.FC<TimelineProps> = ({ log, onSummarize, onDelete, isProce
     const url = URL.createObjectURL(blob);
     if (!audioRef.current) audioRef.current = new Audio();
     audioRef.current.src = url;
-    
     audioRef.current.ontimeupdate = () => setCurrentTime(audioRef.current?.currentTime || 0);
     audioRef.current.onended = () => {
       setPlayingAudioId(null);
@@ -73,20 +67,42 @@ const Timeline: React.FC<TimelineProps> = ({ log, onSummarize, onDelete, isProce
 
   if (!log || (log.transcripts.length === 0 && !isProcessing)) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 px-6 glass-effect rounded-[40px] border-dashed border-2 border-emerald-900/10 mt-4">
-        <div className="w-20 h-20 bg-emerald-500/5 rounded-full flex items-center justify-center mb-8 border border-emerald-500/10">
-          <i className="fas fa-ghost text-3xl text-emerald-900/40"></i>
+      <div className="relative overflow-hidden flex flex-col items-center justify-center py-32 px-6 glass-effect rounded-[48px] border-emerald-500/10 mt-4 animate-in fade-in zoom-in duration-1000">
+        {/* Ambient Neural Network Animation (Visual Only) */}
+        <div className="absolute inset-0 pointer-events-none opacity-20">
+           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-emerald-500/20 rounded-full blur-[120px] animate-pulse"></div>
+           <div className="absolute top-1/4 left-1/4 w-2 h-2 bg-emerald-400 rounded-full animate-ping"></div>
+           <div className="absolute bottom-1/3 right-1/4 w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping delay-700"></div>
         </div>
-        <h3 className="text-xl font-black mb-2 text-emerald-100 uppercase tracking-tighter">Quiet Day</h3>
-        <p className="text-emerald-500/40 text-center max-w-[240px] text-[10px] font-black uppercase tracking-[0.2em] leading-relaxed">
-          {isViewingPast ? "No moments recorded on this date." : "Hit the mic to start logging your day."}
-        </p>
+
+        <div className="relative z-10 flex flex-col items-center">
+          <div className="w-24 h-24 bg-emerald-500/10 rounded-[32px] flex items-center justify-center mb-10 border border-emerald-500/20 rotate-12 group hover:rotate-0 transition-transform duration-500">
+            <i className="fas fa-brain text-4xl text-emerald-400"></i>
+          </div>
+          <h3 className="text-2xl font-black mb-4 text-emerald-50 tracking-tighter text-center leading-none">
+            {isViewingPast ? "SILENT ARCHIVE" : "READY TO LISTEN"}
+          </h3>
+          <p className="text-emerald-500/40 text-center max-w-[280px] text-[10px] font-black uppercase tracking-[0.3em] leading-relaxed mb-8">
+            {isViewingPast 
+              ? "No digital memories found for this specific date." 
+              : "DayTrack is standing by. Press the microphone below to begin your private daily narrative."}
+          </p>
+          
+          {!isViewingPast && (
+            <div className="flex flex-col items-center gap-4">
+               <div className="flex gap-1 items-center bg-emerald-500/5 px-4 py-2 rounded-full border border-emerald-500/10">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                  <span className="text-[9px] font-black text-emerald-700 uppercase tracking-widest">Neural Engine Online</span>
+               </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-12 animate-in fade-in duration-700">
+    <div className="space-y-12 animate-in fade-in duration-700 pb-20">
       <div className="flex items-center justify-between px-2">
         <div className="space-y-1">
           <h2 className="text-lg sm:text-2xl font-black flex items-center gap-3 text-emerald-50 tracking-tighter">
@@ -126,7 +142,6 @@ const Timeline: React.FC<TimelineProps> = ({ log, onSummarize, onDelete, isProce
 
           return (
             <div key={segment.id} id={`segment-${segment.id}`} className="relative group transition-all duration-500">
-              {/* Timeline Indicator */}
               <div className={`absolute -left-[33.5px] sm:-left-[43.5px] top-6 w-5 h-5 rounded-full bg-[#020d0a] border-[4px] transition-all duration-300 ${
                 isActive ? 'border-emerald-400 scale-125 shadow-[0_0_20px_rgba(52,211,153,0.4)]' : 'border-emerald-900/40'
               }`}></div>
@@ -141,13 +156,6 @@ const Timeline: React.FC<TimelineProps> = ({ log, onSummarize, onDelete, isProce
                       {segment.startTime}
                     </span>
                   </div>
-                  {isActive && (
-                    <div className="flex gap-1 h-3 items-end">
-                      <div className="w-1 bg-emerald-400/60 rounded-full animate-[bounce_0.6s_infinite]"></div>
-                      <div className="w-1 bg-emerald-400/60 rounded-full animate-[bounce_0.8s_infinite]"></div>
-                      <div className="w-1 bg-emerald-400/60 rounded-full animate-[bounce_0.4s_infinite]"></div>
-                    </div>
-                  )}
                 </div>
                 
                 <div className={`glass-effect p-5 sm:p-7 rounded-[32px] sm:rounded-[40px] border transition-all duration-500 ${
@@ -175,9 +183,6 @@ const Timeline: React.FC<TimelineProps> = ({ log, onSummarize, onDelete, isProce
                         </button>
                       )}
                     </div>
-                    <span className="text-[10px] font-black text-emerald-900/40 italic">
-                      CONF: {(segment.confidence * 100).toFixed(0)}%
-                    </span>
                   </div>
                   <p className={`text-base sm:text-lg font-medium leading-relaxed transition-all duration-500 ${
                     isActive ? 'text-emerald-50' : 'text-emerald-100/50'

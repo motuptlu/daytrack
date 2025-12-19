@@ -1,6 +1,7 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { ModelStatus } from '../types';
+import { saveLog, saveAudio } from '../db';
 
 interface ModelManagerProps {
   onStatusChange: (models: ModelStatus[]) => void;
@@ -16,66 +17,110 @@ const ModelManager: React.FC<ModelManagerProps> = ({
   setOfflineMode 
 }) => {
   const [models, setModels] = useState<ModelStatus[]>(initialModels);
+  const [isInjecting, setIsInjecting] = useState(false);
 
   const startDownload = (id: string) => {
-    // Reset status and clear previous errors
     setModels(prev => prev.map(m => 
       m.id === id ? { ...m, status: 'downloading' as const, progress: 0, error: undefined } : m
     ));
 
     let progress = 0;
-    const failureThreshold = Math.random() * 80 + 10; // Fail at a random point between 10% and 90%
-    const willFail = Math.random() < 0.2; // 20% chance to fail
-
     const interval = setInterval(() => {
       progress += Math.random() * 12;
-
-      if (willFail && progress >= failureThreshold) {
-        clearInterval(interval);
-        setModels(prev => {
-          const updated = prev.map(m => 
-            m.id === id ? { 
-              ...m, 
-              status: 'none' as const, 
-              progress: 0, 
-              error: 'Connection timeout: Model server unreachable.' 
-            } : m
-          );
-          onStatusChange(updated);
-          return updated;
-        });
-        return;
-      }
-
       if (progress >= 100) {
         progress = 100;
         clearInterval(interval);
         setModels(prev => {
-          const updated = prev.map(m => 
-            m.id === id ? { ...m, status: 'ready' as const, progress: 100, error: undefined } : m
-          );
+          const updated = prev.map(m => m.id === id ? { ...m, status: 'ready' as const, progress: 100 } : m);
           onStatusChange(updated);
           return updated;
         });
       } else {
-        setModels(prev => prev.map(m => 
-          m.id === id ? { ...m, progress } : m
-        ));
+        setModels(prev => prev.map(m => m.id === id ? { ...m, progress } : m));
       }
     }, 400);
   };
 
-  const removeModel = (id: string) => {
-    const updated = models.map(m => 
-      m.id === id ? { ...m, status: 'none' as const, progress: 0, error: undefined } : m
-    );
-    setModels(updated);
-    onStatusChange(updated);
+  const injectDemoData = async () => {
+    setIsInjecting(true);
+    const today = new Date().toISOString().split('T')[0];
+    
+    const demoSegments = [
+      {
+        id: 'demo-1',
+        startTime: '09:15:00',
+        offsetInAudio: 0,
+        duration: 45,
+        speaker: 'You',
+        text: "Today's goal is to finalize the architectural review for the new distributed system. I need to focus on latency metrics.",
+        confidence: 0.99
+      },
+      {
+        id: 'demo-2',
+        startTime: '11:30:00',
+        offsetInAudio: 0,
+        duration: 30,
+        speaker: 'Person 1',
+        text: "The client mentioned that the mobile app response time is lagging in the APAC region. We should check the CDN nodes.",
+        confidence: 0.96
+      },
+      {
+        id: 'demo-3',
+        startTime: '14:20:00',
+        offsetInAudio: 0,
+        duration: 60,
+        speaker: 'You',
+        text: "Meeting with the design team went well. We decided on a minimalist emerald theme to reduce cognitive load.",
+        confidence: 0.98
+      }
+    ];
+
+    const demoLog = {
+      date: today,
+      transcripts: demoSegments,
+      recordingDurationMinutes: 135,
+      summary: {
+        overview: "A highly productive day focused on system architecture and design refinement. Key technical hurdles in APAC latency were identified.",
+        keyEvents: ["Architecture Review", "Client Feedback Session", "UI/UX Emerald Theme Alignment"],
+        actionItems: ["Check CDN nodes for APAC region", "Document design tokens", "Update latency benchmarks"],
+        mood: "Focused & Analytical",
+        topics: ["System Architecture", "Performance", "Design Systems"]
+      }
+    };
+
+    await saveLog(demoLog);
+    // Give it a moment for UI feedback
+    setTimeout(() => {
+      setIsInjecting(false);
+      window.location.reload(); // Quickest way to refresh all views with new DB state
+    }, 1500);
   };
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      {/* Master Offline Toggle */}
+      {/* SHOWCASE SECTION */}
+      <div className="glass-effect rounded-[32px] p-8 border-emerald-500/20 bg-emerald-500/5 overflow-hidden relative">
+        <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
+          <i className="fas fa-magic text-8xl text-emerald-400"></i>
+        </div>
+        <div className="relative z-10">
+          <h2 className="text-2xl font-black text-emerald-50 mb-2 tracking-tighter">PREVIEW & SHOWCASE</h2>
+          <p className="text-xs text-emerald-700 font-bold uppercase tracking-widest mb-6">Instantly visualize DayTrack's full power</p>
+          <button 
+            onClick={injectDemoData}
+            disabled={isInjecting}
+            className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] transition-all border shadow-2xl ${
+              isInjecting 
+              ? 'bg-emerald-900/20 border-emerald-900/30 text-emerald-700 animate-pulse' 
+              : 'bg-emerald-500 border-emerald-400 text-slate-950 hover:scale-[1.02] active:scale-95'
+            }`}
+          >
+            {isInjecting ? 'Populating IndexedDB...' : 'Generate Demo Day Data'}
+          </button>
+          <p className="mt-4 text-[10px] text-emerald-900 text-center font-bold">This will add a sample log to your timeline for today.</p>
+        </div>
+      </div>
+
       <div className="glass-effect rounded-3xl p-8 border-amber-500/10 bg-amber-500/5">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-4">
@@ -83,8 +128,8 @@ const ModelManager: React.FC<ModelManagerProps> = ({
               <i className={`fas ${offlineMode ? 'fa-plane' : 'fa-globe'} text-2xl`}></i>
             </div>
             <div>
-              <h2 className="text-xl font-bold">Offline Transcription Mode</h2>
-              <p className="text-sm text-slate-400">When enabled, DayTrack processes everything locally.</p>
+              <h2 className="text-xl font-bold">Offline Mode</h2>
+              <p className="text-sm text-slate-400">Process everything locally in your browser.</p>
             </div>
           </div>
           <button 
@@ -102,90 +147,37 @@ const ModelManager: React.FC<ModelManagerProps> = ({
 
       <div className="glass-effect rounded-3xl p-8">
         <h2 className="text-2xl font-bold mb-2 flex items-center gap-3">
-          <i className="fas fa-microchip text-indigo-400"></i>
-          Offline Transcription Models
+          <i className="fas fa-microchip text-emerald-400"></i>
+          AI Models
         </h2>
-        <p className="text-slate-400 text-sm mb-8 leading-relaxed">
-          Download language models to enable real-time transcription without an internet connection. 
-          Models are stored securely in your browser's local cache.
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-6 mt-8">
           {models.map(model => (
-            <div key={model.id} className={`bg-slate-800/50 border rounded-2xl p-6 transition-all hover:border-slate-600 ${model.error ? 'border-rose-500/50 shadow-lg shadow-rose-500/5' : 'border-slate-700'}`}>
+            <div key={model.id} className="bg-slate-800/30 border border-slate-700 rounded-2xl p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${model.error ? 'bg-rose-500/10' : 'bg-indigo-500/10'}`}>
-                    <i className={`fas fa-language text-xl ${model.error ? 'text-rose-400' : 'text-indigo-400'}`}></i>
+                  <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                    <i className="fas fa-language text-xl text-emerald-400"></i>
                   </div>
                   <div>
                     <h3 className="font-bold text-lg">{model.name}</h3>
-                    <p className="text-xs text-slate-500 font-mono">{model.size}</p>
+                    <p className="text-xs text-emerald-800 font-mono">{model.size}</p>
                   </div>
                 </div>
-                {model.status === 'ready' && (
-                  <span className="text-[10px] font-bold bg-emerald-500/10 text-emerald-400 px-2 py-1 rounded-full border border-emerald-500/20">
-                    <i className="fas fa-check-circle mr-1"></i> READY
-                  </span>
-                )}
-                {model.error && (
-                  <span className="text-[10px] font-bold bg-rose-500/10 text-rose-400 px-2 py-1 rounded-full border border-rose-500/20 animate-pulse">
-                    <i className="fas fa-circle-exclamation mr-1"></i> FAILED
-                  </span>
-                )}
               </div>
-
               {model.status === 'downloading' ? (
                 <div className="space-y-2">
-                  <div className="flex justify-between text-[10px] font-bold text-slate-400">
-                    <span>DOWNLOADING...</span>
-                    <span>{Math.round(model.progress)}%</span>
-                  </div>
                   <div className="h-1.5 w-full bg-slate-700 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-indigo-500 transition-all duration-300" 
-                      style={{ width: `${model.progress}%` }}
-                    ></div>
+                    <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${model.progress}%` }}></div>
                   </div>
                 </div>
               ) : model.status === 'ready' ? (
-                <button 
-                  onClick={() => removeModel(model.id)}
-                  className="w-full py-2 bg-slate-700/50 hover:bg-rose-500/10 hover:text-rose-400 text-slate-400 rounded-xl text-sm font-bold transition-all border border-slate-700"
-                >
-                  Remove Model
-                </button>
+                <div className="text-[10px] font-black text-emerald-500 uppercase tracking-widest"><i className="fas fa-check mr-2"></i> Installed</div>
               ) : (
-                <div className="space-y-3">
-                  {model.error && (
-                    <p className="text-[11px] text-rose-400 bg-rose-500/5 p-2 rounded-lg border border-rose-500/10 flex items-center gap-2">
-                      <i className="fas fa-triangle-exclamation"></i>
-                      {model.error}
-                    </p>
-                  )}
-                  <button 
-                    onClick={() => startDownload(model.id)}
-                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-indigo-500/20"
-                  >
-                    <i className={`fas ${model.error ? 'fa-rotate-right' : 'fa-download'} mr-2`}></i> 
-                    {model.error ? 'Retry Download' : 'Download'}
-                  </button>
-                </div>
+                <button onClick={() => startDownload(model.id)} className="w-full py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 rounded-xl text-xs font-black uppercase tracking-widest transition-all">Download</button>
               )}
             </div>
           ))}
         </div>
-      </div>
-
-      <div className="glass-effect rounded-3xl p-6 bg-indigo-500/10 border-indigo-500/20">
-        <h3 className="text-lg font-bold mb-2 flex items-center gap-2 text-indigo-400">
-          <i className="fas fa-triangle-exclamation"></i>
-          Storage Advice
-        </h3>
-        <p className="text-sm text-slate-400">
-          Models require significant disk space. If you encounter errors, ensure your browser has enough space allocated for IndexedDB. 
-          Hindi models include specialized phonetic mapping for better accuracy.
-        </p>
       </div>
     </div>
   );
