@@ -30,6 +30,7 @@ const App: React.FC = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     if (!checkKey()) {
@@ -38,6 +39,11 @@ const App: React.FC = () => {
     loadData();
     autoCleanupAndCompress();
     checkPermissions();
+
+    // Android WebView Check for Secure Context
+    if (!window.isSecureContext) {
+      console.warn("Not in a secure context. Microphones may not be available.");
+    }
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -51,21 +57,41 @@ const App: React.FC = () => {
   }, [selectedDate, logs]);
 
   const checkPermissions = async () => {
-    if (navigator.permissions && navigator.permissions.query) {
-      try {
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
         const result = await navigator.permissions.query({ name: 'microphone' as any });
         setPermissionStatus(result.state as PermissionState);
-        result.onchange = () => {
-          setPermissionStatus(result.state as PermissionState);
-        };
-      } catch (e) {
-        console.warn("Permissions API not supported for microphone");
+        result.onchange = () => setPermissionStatus(result.state as PermissionState);
       }
+    } catch (e) {
+      console.warn("Permissions API not supported for mic query");
     }
+  };
+
+  const getSupportedMimeType = () => {
+    const types = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/aac',
+      'audio/wav'
+    ];
+    for (const type of types) {
+      if (MediaRecorder.isTypeSupported(type)) return type;
+    }
+    return '';
   };
 
   const requestInitialPermission = async () => {
     try {
+      // Warm up AudioContext for Android WebView
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      if (audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach(t => t.stop());
       setPermissionStatus('granted');
@@ -73,49 +99,29 @@ const App: React.FC = () => {
     } catch (err: any) {
       console.error("Permission request failed:", err);
       setPermissionStatus('denied');
-      setMicError("Microphone access was denied. Please enable it in your settings.");
+      setMicError(`Android Permission Error: ${err.name}. Please check App Settings.`);
+      alert("Microphone Blocked! Go to Phone Settings > Apps > DayTrack > Permissions and ALLOW Microphone.");
     }
-  };
-
-  const stopTracks = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-  };
-
-  const loadData = async () => {
-    const allLogs = await getAllLogs();
-    setLogs(allLogs);
-  };
-
-  const getSupportedMimeType = () => {
-    const types = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/ogg;codecs=opus',
-      'audio/mp4',
-      'audio/aac',
-      'audio/wav'
-    ];
-    for (const type of types) {
-      if (MediaRecorder.isTypeSupported(type)) {
-        return type;
-      }
-    }
-    return '';
   };
 
   const startRecording = async () => {
     setMicError(null);
     
+    // Check if mediaDevices exists (Important for Android APK)
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setMicError("Your device or browser doesn't support audio recording.");
+      const errorMsg = "Critical: 'mediaDevices' API not found in this WebView. Ensure you enabled Microphone in WebIntoApp settings.";
+      setMicError(errorMsg);
+      alert(errorMsg);
       return;
     }
 
     try {
       if (navigator.vibrate) navigator.vibrate(50);
+
+      // Force resume AudioContext on every start for mobile reliability
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
 
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
@@ -129,9 +135,7 @@ const App: React.FC = () => {
       setPermissionStatus('granted');
 
       const mimeType = getSupportedMimeType();
-      if (!mimeType) {
-        throw new Error("No supported audio codec found.");
-      }
+      if (!mimeType) throw new Error("No supported audio codec found in this device.");
 
       const recorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = recorder;
@@ -182,41 +186,46 @@ const App: React.FC = () => {
 
       recorder.start();
       setIsRecording(true);
-      
       timerRef.current = window.setInterval(() => {
         setRecordingSeconds(s => s + 1);
       }, 1000);
 
     } catch (err: any) {
       console.error("Recording failed to start:", err);
-      let msg = "Mic Error: " + (err.message || "Unknown error");
-      
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' || err.name === 'SecurityError') {
-        msg = "Microphone access denied. Please allow microphone access in your settings to record.";
+      let msg = `Mic Error: ${err.name} - ${err.message}`;
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        msg = "Android Permission Denied. Please enable Microphone in Phone Settings for this App.";
         setPermissionStatus('denied');
-      } else if (err.name === 'NotFoundError') {
-        msg = "No microphone found on this device.";
       }
-      
       setMicError(msg);
       setIsRecording(false);
       stopTracks();
     }
   };
 
+  const stopTracks = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+  };
+
   const stopRecording = () => {
     if (navigator.vibrate) navigator.vibrate([30, 30]);
-    
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
     }
     stopTracks();
-    
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
     setIsRecording(false);
+  };
+
+  const loadData = async () => {
+    const allLogs = await getAllLogs();
+    setLogs(allLogs);
   };
 
   const handleSummarize = async () => {
@@ -228,7 +237,7 @@ const App: React.FC = () => {
       await saveLog(updatedLog);
       await loadData();
     } catch (error) {
-      console.error("Summary generation failed:", error);
+      console.error("Summary failed:", error);
     } finally {
       setIsProcessing(false);
     }
@@ -236,7 +245,7 @@ const App: React.FC = () => {
 
   const handleDelete = async () => {
     if (!currentLog) return;
-    if (window.confirm(`Delete all data for ${currentLog.date}?`)) {
+    if (window.confirm(`Delete log for ${currentLog.date}?`)) {
       const audioIds = currentLog.transcripts.map(t => t.audioId).filter((id): id is string => !!id);
       await deleteDayData(currentLog.date, audioIds);
       await loadData();
@@ -247,59 +256,36 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#020d0a] text-emerald-50 font-sans selection:bg-emerald-500/30 overflow-x-hidden pb-12">
       
-      {/* Dynamic Headers for Keys and Permissions */}
+      {/* Alert Bars - Fixed at Top */}
       <div className="fixed top-0 left-0 right-0 z-[100] flex flex-col gap-px">
         {apiKeyMissing && (
-          <div className="bg-rose-500/20 backdrop-blur-md border-b border-rose-500/30 px-4 py-2 text-[10px] text-center font-bold text-rose-300 uppercase tracking-widest animate-pulse">
-            <i className="fas fa-exclamation-triangle mr-2"></i>
-            API_KEY Missing. Running in Demo Mode.
+          <div className="bg-rose-500/20 backdrop-blur-md border-b border-rose-500/30 px-4 py-2 text-[10px] text-center font-bold text-rose-300 uppercase tracking-widest">
+            API_KEY Missing. App is in Demo Mode.
           </div>
         )}
 
         {permissionStatus === 'prompt' && (
-          <div className="bg-emerald-500/90 text-slate-950 px-4 py-3 flex items-center justify-between shadow-2xl">
-            <div className="flex items-center gap-3">
-              <i className="fas fa-microphone text-sm"></i>
-              <span className="text-xs font-black uppercase tracking-tight">Microphone access required</span>
-            </div>
-            <button 
-              onClick={requestInitialPermission}
-              className="bg-slate-950 text-emerald-400 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform"
-            >
-              Enable
-            </button>
+          <div className="bg-emerald-500 text-slate-950 px-4 py-3 flex items-center justify-between shadow-2xl">
+            <span className="text-xs font-black uppercase tracking-tight">Enable Microphone Access</span>
+            <button onClick={requestInitialPermission} className="bg-slate-950 text-emerald-400 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest">Enable</button>
           </div>
         )}
 
         {permissionStatus === 'denied' && (
           <div className="bg-amber-500 text-slate-950 px-4 py-3 flex items-center justify-between shadow-2xl">
-            <div className="flex items-center gap-3">
-              <i className="fas fa-exclamation-circle text-sm"></i>
-              <span className="text-xs font-black uppercase tracking-tight">Mic access is blocked</span>
-            </div>
-            <button 
-              onClick={() => alert("To fix this:\n1. Open Android Settings\n2. Go to Apps > DayTrack\n3. Select Permissions\n4. Enable Microphone\n5. Restart the app.")}
-              className="bg-slate-950 text-amber-400 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest"
-            >
-              How to fix
-            </button>
+            <span className="text-xs font-black uppercase tracking-tight">Mic is blocked in Android Settings</span>
+            <button onClick={() => alert("1. Open Settings\n2. Apps > DayTrack\n3. Permissions > Microphone\n4. Allow while using the app")} className="bg-slate-950 text-amber-400 px-4 py-1.5 rounded-full text-[10px] font-black uppercase">How to fix</button>
+          </div>
+        )}
+
+        {micError && (
+          <div className="bg-rose-600 text-white px-4 py-3 flex items-start gap-3 shadow-2xl animate-in slide-in-from-top duration-300">
+            <i className="fas fa-exclamation-triangle mt-1 text-xs"></i>
+            <p className="text-[10px] font-bold flex-1">{micError}</p>
+            <button onClick={() => setMicError(null)} className="opacity-50"><i className="fas fa-times"></i></button>
           </div>
         )}
       </div>
-
-      {micError && permissionStatus !== 'denied' && (
-        <div className="fixed top-12 left-2 right-2 bg-amber-500 text-slate-950 px-4 py-4 rounded-2xl shadow-2xl z-[90] animate-in slide-in-from-top duration-300">
-           <div className="flex items-start gap-4">
-              <i className="fas fa-exclamation-circle text-xl mt-1"></i>
-              <div className="flex-1">
-                 <p className="text-sm font-black leading-tight">{micError}</p>
-              </div>
-              <button onClick={() => setMicError(null)} className="bg-slate-950/10 p-2 rounded-lg">
-                 <i className="fas fa-times"></i>
-              </button>
-           </div>
-        </div>
-      )}
 
       <nav className="fixed bottom-0 left-0 right-0 z-50 px-6 pb-8 pt-4 bg-gradient-to-t from-[#020d0a] via-[#020d0a]/90 to-transparent">
         <div className="max-w-xl mx-auto glass-effect rounded-[32px] p-2 flex items-center justify-between border border-emerald-500/10 shadow-2xl">
@@ -312,10 +298,9 @@ const App: React.FC = () => {
             )}
             <button 
               onPointerDown={() => {
-                if (window.AudioContext || (window as any).webkitAudioContext) {
-                   const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-                   if (ctx.state === 'suspended') ctx.resume();
-                }
+                // Pre-warm audio for Android
+                if (!audioContextRef.current) audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+                if (audioContextRef.current.state === 'suspended') audioContextRef.current.resume();
               }}
               onClick={isRecording ? stopRecording : startRecording}
               className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-500 -translate-y-4 shadow-2xl relative z-10 ${
@@ -333,82 +318,37 @@ const App: React.FC = () => {
         </div>
       </nav>
 
-      <main className="max-w-2xl mx-auto px-4 sm:px-6 pt-16 pb-32">
-        <header className="flex items-center justify-between mb-12">
+      <main className="max-w-2xl mx-auto px-4 sm:px-6 pt-24 pb-32">
+        <header className="flex items-center justify-between mb-10">
           <div className="flex items-center gap-4">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
+            <div className="w-10 h-10 bg-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
               <i className="fas fa-microchip text-slate-950 text-xl"></i>
             </div>
             <div>
-              <h1 className="text-xl sm:text-2xl font-black tracking-tighter text-emerald-50 leading-none">DAYTRACK</h1>
-              <p className="text-[9px] font-black text-emerald-800 uppercase tracking-[0.3em] mt-1">AI Private Log v2.7</p>
+              <h1 className="text-xl font-black tracking-tighter text-emerald-50 leading-none">DAYTRACK</h1>
+              <p className="text-[9px] font-black text-emerald-800 uppercase tracking-widest mt-1">AI Android Engine v2.9</p>
             </div>
           </div>
           
-          <div className="flex flex-col items-end">
-             {isRecording && (
-                <div className="flex items-center gap-2 text-rose-500 animate-pulse bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/20">
-                   <div className="w-1.5 h-1.5 rounded-full bg-rose-500"></div>
-                   <span className="text-[10px] font-mono font-black">{Math.floor(recordingSeconds/60)}:{(recordingSeconds%60).toString().padStart(2, '0')}</span>
-                </div>
-             )}
-             {!isRecording && (
-               <button onClick={() => setActiveView('settings')} className={`p-2 rounded-lg transition-colors ${activeView === 'settings' ? 'text-emerald-400 bg-emerald-400/10' : 'text-emerald-900'}`}>
-                  <i className="fas fa-cog text-lg"></i>
-               </button>
-             )}
-          </div>
+          {isRecording && (
+            <div className="flex items-center gap-2 text-rose-500 animate-pulse bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/20">
+               <span className="text-[10px] font-mono font-black">{Math.floor(recordingSeconds/60)}:{(recordingSeconds%60).toString().padStart(2, '0')}</span>
+            </div>
+          )}
         </header>
 
-        {activeView === 'timeline' && (
-          <div className="animate-in fade-in duration-500">
-            <StatsOverview currentLog={currentLog} totalLogs={logs.length} />
-            <Timeline 
-              log={currentLog} 
-              onSummarize={handleSummarize} 
-              onDelete={handleDelete}
-              isProcessing={isProcessing}
-              isViewingPast={selectedDate !== new Date().toISOString().split('T')[0]}
-            />
-          </div>
-        )}
-
-        {activeView === 'calendar' && (
-          <CalendarView 
-            logs={logs} 
-            selectedDate={selectedDate} 
-            onSelectDate={(d) => { setSelectedDate(d); setActiveView('timeline'); }} 
-          />
-        )}
-
-        {activeView === 'summary' && (
-          <SummaryView summary={currentLog?.summary} />
-        )}
-
-        {activeView === 'search' && (
-          <SearchView logs={logs} />
-        )}
-
-        {activeView === 'settings' && (
-          <ModelManager 
-            offlineMode={offlineMode} 
-            setOfflineMode={setOfflineMode} 
-            initialModels={[]}
-            onStatusChange={() => {}}
-          />
-        )}
+        {activeView === 'timeline' && <Timeline log={currentLog} onSummarize={handleSummarize} onDelete={handleDelete} isProcessing={isProcessing} isViewingPast={selectedDate !== new Date().toISOString().split('T')[0]} />}
+        {activeView === 'calendar' && <CalendarView logs={logs} selectedDate={selectedDate} onSelectDate={(d) => { setSelectedDate(d); setActiveView('timeline'); }} />}
+        {activeView === 'summary' && <SummaryView summary={currentLog?.summary} />}
+        {activeView === 'search' && <SearchView logs={logs} />}
+        {activeView === 'settings' && <ModelManager offlineMode={offlineMode} setOfflineMode={setOfflineMode} initialModels={[]} onStatusChange={() => {}} />}
       </main>
     </div>
   );
 };
 
 const NavBtn = ({ icon, active, onClick }: { icon: string, active: boolean, onClick: () => void }) => (
-  <button 
-    onClick={onClick}
-    className={`w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-all ${
-      active ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-400/20' : 'text-emerald-900 hover:text-emerald-700'
-    }`}
-  >
+  <button onClick={onClick} className={`w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-all ${active ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-400/20' : 'text-emerald-900 hover:text-emerald-700'}`}>
     <i className={`fas ${icon} text-lg`}></i>
   </button>
 );
